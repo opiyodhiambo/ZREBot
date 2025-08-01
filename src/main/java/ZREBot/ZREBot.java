@@ -46,10 +46,10 @@ public class ZREBot {
                     .setActivity(Activity.streaming(config.getStatusText(), config.getStatusUrl()))
                     .setStatus(config.getOnlineStatus())
                     .enableIntents(
-                            GatewayIntent.GUILD_MEMBERS,
-                            GatewayIntent.GUILD_MESSAGES,
-                            GatewayIntent.MESSAGE_CONTENT,
-                            GatewayIntent.GUILD_MESSAGE_REACTIONS
+//                            GatewayIntent.GUILD_MEMBERS,
+                            GatewayIntent.GUILD_MESSAGES
+//                            GatewayIntent.MESSAGE_CONTENT,
+//                            GatewayIntent.GUILD_MESSAGE_REACTIONS
                     )
                     .addEventListeners(
                             new CommandEventListener(this),
@@ -61,7 +61,7 @@ public class ZREBot {
                     .build()
                     .awaitReady();
 
-            CommandEventListener.registerCommands(jda);
+            CommandEventListener.registerCommands(jda, config);
 
             eventNameRepository.printStatistics();
 

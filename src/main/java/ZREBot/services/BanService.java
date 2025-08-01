@@ -11,8 +11,14 @@ import java.util.function.Consumer;
 
 public class BanService {
 
-    public void banUser(Guild guild, User targetUser, String reason, TextChannel modLogChannel,
-                        User moderatorUser, Consumer<Void> onSuccess, Consumer<Throwable> onError) {
+    public void banUser(
+            Guild guild,
+            User targetUser,
+            String reason,
+            TextChannel modLogChannel,
+            User moderatorUser,
+            Consumer<Void> onSuccess,
+            Consumer<Throwable> onError) {
         try {
             guild.ban(targetUser, 0, TimeUnit.DAYS)
                     .reason(reason)

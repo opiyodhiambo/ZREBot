@@ -75,9 +75,6 @@ public class BotConfig {
                         .load();
 
                 token = dotenv.get("BOT_TOKEN");
-                if (token == null || token.isEmpty()) {
-                    token = dotenv.get("TOKEN");
-                }
 
                 if (token != null && !token.isEmpty()) {
                     System.out.println("Found token in .env file in " + dir);
@@ -115,6 +112,10 @@ public class BotConfig {
 
     public String getStatusText() {
         return getEnvOrDefault("BOT_STATUS", "🌍 Watching ZRE!");
+    }
+
+    public String getChannelId() {
+        return getEnvOrDefault("GUILD_ID", "");
     }
 
     public String getStatusUrl() {

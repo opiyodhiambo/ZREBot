@@ -37,7 +37,8 @@ public class VoidCheckerService {
             Runnable onNoReactions,
             Runnable onNoValidReactions,
             Consumer<String> onMessageNotFound,
-            Consumer<Throwable> onError) {
+            Consumer<Throwable> onError
+    ) {
         try {
             messageChannel.retrieveMessageById(messageId).queue(
                     targetMessage -> {

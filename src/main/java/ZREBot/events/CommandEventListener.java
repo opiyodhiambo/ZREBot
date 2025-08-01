@@ -2,8 +2,10 @@ package ZREBot.events;
 
 import ZREBot.ZREBot;
 import ZREBot.commands.*;
+import ZREBot.config.BotConfig;
 import ZREBot.utils.EmbedUtils;
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
@@ -75,9 +77,11 @@ public class CommandEventListener extends ListenerAdapter {
         commands.put(command.getName(), command);
     }
 
-    public static void registerCommands(JDA jda) {
+    public static void registerCommands(JDA jda, BotConfig config) {
+        Guild guild = jda.getGuildById(config.getChannelId());
+        System.out.println("Guild Id " + guild);
         try {
-            jda.updateCommands()
+            guild.updateCommands()
                     .addCommands(
                             Commands.slash("test", "Check if the bot is working"),
 

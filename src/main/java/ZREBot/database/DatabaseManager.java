@@ -44,6 +44,8 @@ public class DatabaseManager {
             }
         }
 
+        System.out.println("DATABASE URL " + dbUrl);
+
         // If URL contains user and password parameters, extract them
         if (dbUrl != null && (dbUser == null || dbPassword == null)) {
             if (dbUrl.contains("user=") && dbUrl.contains("password=")) {

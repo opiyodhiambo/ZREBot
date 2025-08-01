@@ -3,7 +3,9 @@ package ZREBot.commands;
 import ZREBot.ZREBot;
 import ZREBot.models.EventNameData;
 import ZREBot.models.UserData;
+import ZREBot.repositories.EventNameRepository;
 import ZREBot.repositories.PostgresEventNameRepository;
+import ZREBot.services.VoidCheckerService;
 import ZREBot.utils.EmbedUtils;
 import ZREBot.utils.PermissionUtils;
 import net.dv8tion.jda.api.entities.Member;
@@ -25,7 +27,9 @@ import java.util.Map;
 
 public class VoidCheckerCommand implements Command {
     private final ZREBot bot;
-    private final PostgresEventNameRepository repository;
+    private final PostgresEventNameRepository postgresEventNameRepository;
+    private final EventNameRepository eventNameRepository;
+    private final VoidCheckerService voidCheckerService;
 
     private static final OptionData[] VOID_CHECKER_OPTIONS = {
             new OptionData(OptionType.STRING, "reaction-message", "The ID of the message to check", true),
@@ -35,7 +39,9 @@ public class VoidCheckerCommand implements Command {
 
     public VoidCheckerCommand(ZREBot bot) {
         this.bot = bot;
-        this.repository = bot.getEventNameRepository();
+        this.postgresEventNameRepository = bot.getEventNameRepository();
+        this.eventNameRepository = new EventNameRepository();
+        this.voidCheckerService = new VoidCheckerService(this.eventNameRepository);
     }
 
     @Override
@@ -71,75 +77,60 @@ public class VoidCheckerCommand implements Command {
             return;
         }
 
-        try {
-            event.getChannel().retrieveMessageById(messageId).queue(
-                    targetMessage -> {
-                        try {
-                            List<MessageReaction> reactions = targetMessage.getReactions();
-                            if (reactions.isEmpty()) {
-                                event.getHook().sendMessageEmbeds(EmbedUtils.createEmbed(
-                                        Color.YELLOW,
-                                        "⚠️ No reactions found on the message"
-                                )).queue();
-                                return;
-                            }
+        voidCheckerService.checkUserReaction(
+                event.getChannel(),
+                messageId,
+                queryName,
+                targetUser,
+                event.getGuild(),
+                userCheckResult -> {
+                    String formattedMessage = voidCheckerService.formatUserCheckResult(userCheckResult);
+                    event.getHook().sendMessageEmbeds(EmbedUtils.createEmbed(
+                            Color.BLUE,
+                            formattedMessage
+                    )).queue();
+                },
 
-                            Map<String, UserData> userData = collectUserData(event, reactions);
+                // onUserNotFound
+                () -> {
+                    event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
+                            "That user is not reacted. **Try checking the user individually, or check the user name and not the discord name shown.** " +
+                                    "If you are checking an event name, the win should be **voided.**"
+                    )).queue();
+                },
 
-                            if (userData.isEmpty()) {
-                                event.getHook().sendMessageEmbeds(EmbedUtils.createEmbed(
-                                        Color.YELLOW,
-                                        "⚠️ No valid user reactions found"
-                                )).queue();
-                                return;
-                            }
+                //onNoReactions
+                () -> {
+                    event.getHook().sendMessageEmbeds(EmbedUtils.createEmbed(
+                            Color.YELLOW,
+                            "⚠️ No reactions found on the message"
+                    )).queue();
+                },
 
-                            UserData foundUser = findUser(userData, queryName, targetUser);
+                // onNoValidReactions
+                () -> {
+                    event.getHook().sendMessageEmbeds(EmbedUtils.createEmbed(
+                            Color.YELLOW,
+                            "⚠️ No valid user reactions found"
+                    )).queue();
+                },
 
-                            if (foundUser == null) {
-                                event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
-                                        "That user is not reacted. **Try checking the user individually, or check the user name and not the discord name shown.** " +
-                                                "If you are checking an event name, the win should be **voided.**"
-                                )).queue();
-                                return;
-                            }
+                // onMessageNotFound
+                onMessageNotFound -> {
+                    event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
+                            "Could not find that message (Error " + onMessageNotFound +
+                                    "). **RUN THIS COMMAND IN THE CHANNEL THE MESSAGE IS IN**"
+                    )).queue();
+                },
 
-                            String message = "🌍 **" + foundUser.getUserName() + " (" + foundUser.getUserId() + ") is reacted (out of `" +
-                                    userData.size() + "` reacts):** \n\n" +
-                                    "Here is all the info I was able to find on the user you searched for...\n" +
-                                    "```\n" +
-                                    "USERNAME: " + foundUser.getUserName() + "\n" +
-                                    "DISPLAY NAME: " + foundUser.getDisplayName() + "\n" +
-                                    "NICKNAME: " + (foundUser.getNickname() != null ? foundUser.getNickname() : "None") + "\n" +
-                                    "EVENTNAME: " + (foundUser.getEventName() != null ? foundUser.getEventName() : "None") + "\n" +
-                                    "USERID: " + foundUser.getUserId() + "\n" +
-                                    "```\n\n" +
-                                    "As long as the IGN of this user is any of the names above, this user's wins **should not be voided.**";
-
-                            event.getHook().sendMessageEmbeds(EmbedUtils.createEmbed(
-                                    Color.BLUE,
-                                    message
-                            )).queue();
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
-                                    "An error occurred while processing the message: " + e.getMessage()
-                            )).queue();
-                        }
-                    },
-                    error -> {
-                        event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
-                                "Could not find that message (Error " + error.getMessage() +
-                                        "). **RUN THIS COMMAND IN THE CHANNEL THE MESSAGE IS IN**"
-                        )).queue();
-                    }
-            );
-        } catch (Exception e) {
-            e.printStackTrace();
-            event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
-                    "An error occurred: " + e.getMessage()
-            )).queue();
-        }
+                // onError
+                throwable -> {
+                    throwable.printStackTrace();
+                    event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
+                            "An error occurred while processing the message: " + throwable.getMessage()
+                    )).queue();
+                }
+        );
     }
 
     private Map<String, UserData> collectUserData(SlashCommandInteractionEvent event, List<MessageReaction> reactions) {
@@ -181,7 +172,7 @@ public class VoidCheckerCommand implements Command {
                         }
 
                         String eventName = null;
-                        EventNameData data = repository.getEventNameByUser(user.getId());
+                        EventNameData data = postgresEventNameRepository.getEventNameByUser(user.getId());
                         if (data != null) {
                             eventName = data.getName();
                         }
