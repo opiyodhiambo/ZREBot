@@ -26,50 +26,44 @@ public class VoidCheckerService {
         this.eventNameRepository = eventNameRepository;
     }
 
-    public void checkUserReaction(
-            MessageChannel messageChannel,
-            String messageId,
-            String queryName,
-            User targetUser,
-            Guild guild,
-            Consumer<UserCheckResult> onSuccess,
-            Runnable onUserNotFound,
-            Runnable onNoReactions,
-            Runnable onNoValidReactions,
-            Consumer<String> onMessageNotFound,
-            Consumer<Throwable> onError
-    ) {
+    public void checkUserReaction(MessageChannel messageChannel, String messageId, String queryName, User targetUser, Guild guild, Consumer<UserCheckResult> onSuccess, Runnable onUserNotFound, Runnable onNoReactions, Runnable onNoValidReactions, Consumer<String> onMessageNotFound, Consumer<Throwable> onError) {
         try {
-            messageChannel.retrieveMessageById(messageId).queue(
-                    targetMessage -> {
-                        try {
-                            List<MessageReaction> reactions = targetMessage.getReactions();
-                            if (reactions.isEmpty()) {
-                                onNoReactions.run();
-                                return;
-                            }
+            messageChannel.retrieveMessageById(messageId).queue(targetMessage -> {
+                try {
+                    List<MessageReaction> reactions = targetMessage.getReactions();
+                    if (reactions.isEmpty()) {
+                        onNoReactions.run();
+                        return;
+                    }
 
-                            Map<String, UserData> userData = collectUserData(reactions, guild);
-
-                            if (userData.isEmpty()) {
-                                onNoValidReactions.run();
-                                return;
-                            }
-
-                            UserData foundUser = findUser(userData, queryName, targetUser);
-
-                            if (foundUser == null) {
-                                onUserNotFound.run();
-                                return;
-                            }
-
-                            onSuccess.accept(new UserCheckResult(foundUser, userData.size()));
-                        } catch (Exception e) {
-                            onError.accept(e);
+                    System.out.println("Starting to collect user data...");
+                    collectUserData(reactions, guild).whenComplete((userData, error) -> {
+                        System.out.println("Finished collecting user data: " + userData.size() + " users found");
+                        if (error != null) {
+                            onError.accept(error);
+                            return;
                         }
-                    },
-                    error -> onMessageNotFound.accept(error.getMessage())
-            );
+
+                        if (userData.isEmpty()) {
+                            onNoValidReactions.run();
+                            return;
+                        }
+
+                        UserData foundUser = findUser(userData, queryName, targetUser);
+                        System.out.println("Found user " + foundUser);
+
+                        if (foundUser == null) {
+                            onUserNotFound.run();
+                            return;
+                        }
+                        onSuccess.accept(new UserCheckResult(foundUser, userData.size()));
+                    });
+
+
+                } catch (Exception e) {
+                    onError.accept(e);
+                }
+            }, error -> onMessageNotFound.accept(error.getMessage()));
         } catch (Exception e) {
             onError.accept(e);
         }
@@ -79,102 +73,79 @@ public class VoidCheckerService {
         UserData foundUser = result.getUserData();
         int totalReactions = result.getTotalReactions();
 
-        return "🌍 **" + foundUser.getUserName() + " (" + foundUser.getUserId() + ") is reacted (out of `" +
-                totalReactions + "` reacts):** \n\n" +
-                "Here is all the info I was able to find on the user you searched for...\n" +
-                "```\n" +
-                "USERNAME: " + foundUser.getUserName() + "\n" +
-                "DISPLAY NAME: " + foundUser.getDisplayName() + "\n" +
-                "NICKNAME: " + (foundUser.getNickname() != null ? foundUser.getNickname() : "None") + "\n" +
-                "EVENTNAME: " + (foundUser.getEventName() != null ? foundUser.getEventName() : "None") + "\n" +
-                "USERID: " + foundUser.getUserId() + "\n" +
-                "```\n\n" +
-                "As long as the IGN of this user is any of the names above, this user's wins **should not be voided.**";
+        return "🌍 **" + foundUser.getUserName() + " (" + foundUser.getUserId() + ") is reacted (out of `" + totalReactions + "` reacts):** \n\n" + "Here is all the info I was able to find on the user you searched for...\n" + "```\n" + "USERNAME: " + foundUser.getUserName() + "\n" + "DISPLAY NAME: " + foundUser.getDisplayName() + "\n" + "NICKNAME: " + (foundUser.getNickname() != null ? foundUser.getNickname() : "None") + "\n" + "EVENTNAME: " + (foundUser.getEventName() != null ? foundUser.getEventName() : "None") + "\n" + "USERID: " + foundUser.getUserId() + "\n" + "```\n\n" + "As long as the IGN of this user is any of the names above, this user's wins **should not be voided.**";
     }
 
-    private Map<String, UserData> collectUserData(List<MessageReaction> reactions, Guild guild)
-            throws ExecutionException, InterruptedException {
-        Map<String, UserData> userData = new HashMap<>();
 
+    private CompletableFuture<Map<String, UserData>> collectUserData(List<MessageReaction> reactions, Guild guild) {
+        Map<String, UserData> userData = new HashMap<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+        System.out.println("Processing " + reactions.size() + " reactions...");
         for (MessageReaction reaction : reactions) {
             System.out.println("Processing reaction: " + reaction.getEmoji() + " with count: " + reaction.getCount());
 
-            ReactionPaginationAction users = reaction.retrieveUsers();
-            List<User> allUsers = new ArrayList<>();
+            CompletableFuture<Void> reactionFeature = new CompletableFuture<>();
+            futures.add(reactionFeature);
 
-            users.forEachAsync(user -> {
-                allUsers.add(user);
-                return true;
-            }).get();
+            reaction.retrieveUsers().forEachAsync(user -> {
+                if (!user.isBot()) {
+                    CompletableFuture<Void> memberFuture = new CompletableFuture<>();
+                    futures.add(memberFuture);
 
-            System.out.println("Retrieved " + allUsers.size() + " users for reaction " + reaction.getEmoji());
+                    guild.retrieveMemberById(user.getId()).queue(member -> {
+                        try {
+                            String eventName = null;
+                            EventNameData data = eventNameRepository.getEventNameByUser(user.getId());
+                            if (data != null) {
+                                eventName = data.getName();
+                            }
 
-            for (User user : allUsers) {
-                if (user.isBot()) continue;
+                            synchronized (userData) {
+                                userData.put(user.getId(), new UserData(user.getName().toLowerCase(), member.getEffectiveName().toLowerCase(), member.getNickname() != null ? member.getNickname().toLowerCase() : null, eventName, user.getId()));
+                                System.out.println("Retrieved " + userData.size() + " users for reaction " + reaction.getEmoji());
+                            }
 
-                System.out.println("Found user reaction: " + user.getName() + " (" + user.getId() + ")");
-
-                if (userData.containsKey(user.getId())) continue;
-
-                try {
-                    Member member;
-                    try {
-                        member = guild.retrieveMemberById(user.getId()).complete();
-                    } catch (Exception e) {
-                        System.err.println("Error retrieving member " + user.getId() + ": " + e.getMessage());
-                        continue;
-                    }
-
-                    if (member == null) {
-                        System.out.println("Could not retrieve member for " + user.getName() + " (" + user.getId() + ")");
-                        continue;
-                    }
-
-                    String eventName = null;
-                    EventNameData data = eventNameRepository.getEventNameByUser(user.getId());
-                    if (data != null) {
-                        eventName = data.getName();
-                    }
-
-                    userData.put(user.getId(), new UserData(
-                            user.getName().toLowerCase(),
-                            member.getEffectiveName().toLowerCase(),
-                            member.getNickname() != null ? member.getNickname().toLowerCase() : null,
-                            eventName,
-                            user.getId()
-                    ));
-
-                    System.out.println("Successfully processed user: " + user.getName());
-                } catch (Exception e) {
-                    System.err.println("Error processing user " + user.getId() + ": " + e.getMessage());
-                    e.printStackTrace();
+                            memberFuture.complete(null);
+                        } catch (Exception e) {
+                            System.err.println("Error processing user " + user.getId() + ": " + e.getMessage());
+                            memberFuture.completeExceptionally(e);
+                        }
+                    }, error -> {
+                        System.err.println("Error retrieving member " + user.getId() + ": " + error.getMessage());
+                        memberFuture.completeExceptionally(error);
+                    });
                 }
-            }
+                return true;
+            }).whenComplete((unused, throwable) -> {
+                if (throwable != null) {
+                    System.err.println("Error iterating users for reaction: " + throwable.getMessage());
+                }
+                reactionFeature.complete(null);
+            });
         }
 
-        System.out.println("Total users found: " + userData.size());
-        return userData;
+        // Wait for all member retrievals to complete
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).thenApply(v -> userData);
     }
 
     private UserData findUser(Map<String, UserData> userData, String queryName, User targetUser) {
+        System.out.println("Entering findUser with queryName = " + queryName + ", targetUser = " + targetUser);
         if (queryName != null && targetUser != null) {
             UserData data = userData.get(targetUser.getId());
-            if (data != null && data.getUserName().equals(queryName)) {
-                return data;
-            }
-            return null;
+            System.out.println("data " + data);
+            return data;
         }
 
         if (targetUser != null) {
+            System.out.println("targetUser " + targetUser);
             return userData.get(targetUser.getId());
         }
 
         if (queryName != null) {
             for (UserData data : userData.values()) {
-                if (data.getUserName().equals(queryName) ||
-                        data.getDisplayName().equals(queryName) ||
-                        (data.getNickname() != null && data.getNickname().equals(queryName)) ||
-                        (data.getEventName() != null && data.getEventName().equals(queryName))) {
+                if (data.getUserName().equals(queryName) || data.getDisplayName().equals(queryName) || (data.getNickname() != null && data.getNickname().equals(queryName)) || (data.getEventName() != null && data.getEventName().equals(queryName))) {
+                    System.out.println("data " + data);
                     return data;
                 }
             }
@@ -186,10 +157,7 @@ public class VoidCheckerService {
     public CompletableFuture<Boolean> doesMessageExist(MessageChannel messageChannel, String messageId) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
 
-        messageChannel.retrieveMessageById(messageId).queue(
-                message -> future.complete(true),
-                error -> future.complete(false)
-        );
+        messageChannel.retrieveMessageById(messageId).queue(message -> future.complete(true), error -> future.complete(false));
 
         return future;
     }

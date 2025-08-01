@@ -69,6 +69,7 @@ public class VoidCheckerCommand implements Command {
 
         String queryName = userNameOption != null ? userNameOption.getAsString().toLowerCase() : null;
         User targetUser = userOption != null ? userOption.getAsUser() : null;
+        System.out.println("targetUser " + targetUser);
 
         if (targetUser == null && queryName == null) {
             event.getHook().sendMessageEmbeds(EmbedUtils.createErrorEmbed(
